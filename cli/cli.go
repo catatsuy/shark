@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -109,14 +110,11 @@ func (c *CLI) run(configPath string) error {
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-		defer cancel()
-
 		for _, v := range conf.Plugin {
 			for _, com := range v {
 				switch t := com.Raw.(type) {
 				case string:
-					err := c.commandRun(ctx, "sh", "-c", t)
+					err := c.commandRun(10*time.Second, "sh", "-c", t)
 					if err != nil {
 						errs = multierr.Append(errs, err)
 					}
@@ -132,7 +130,7 @@ func (c *CLI) run(configPath string) error {
 						}
 						args = append(args, str)
 					}
-					err := c.commandRun(ctx, args[0], args[1:]...)
+					err := c.commandRun(10*time.Second, args[0], args[1:]...)
 					if err != nil {
 						errs = multierr.Append(errs, err)
 					}
@@ -140,7 +138,7 @@ func (c *CLI) run(configPath string) error {
 					if len(t) == 0 {
 						return fmt.Errorf("failed to parse")
 					}
-					err := c.commandRun(ctx, t[0], t[1:]...)
+					err := c.commandRun(10*time.Second, t[0], t[1:]...)
 					if err != nil {
 						errs = multierr.Append(errs, err)
 					}
@@ -156,17 +154,58 @@ func (c *CLI) run(configPath string) error {
 	return errs
 }
 
-func (c *CLI) commandRun(ctx context.Context, name string, arg ...string) error {
+func (c *CLI) commandRun(timeout time.Duration, name string, arg ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+10*time.Second)
+	defer cancel()
+	timeoutCh := time.After(timeout)
 	cmd := exec.CommandContext(ctx, name, arg...)
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	err := cmd.Run()
+
+	exitCh := make(chan struct{})
+	errCh := make(chan error)
+
+	go func(cmd *exec.Cmd) {
+		select {
+		case <-exitCh:
+			return
+		case <-timeoutCh:
+			err := cmd.Process.Signal(syscall.SIGTERM)
+			if err != nil {
+				errCh <- err
+			}
+			return
+		}
+	}(cmd)
+
+	err := cmd.Start()
 	if err != nil {
-		fmt.Fprintf(c.outStream, stdout.String())
-		fmt.Fprintf(c.errStream, stderr.String())
+		fmt.Fprint(c.outStream, stdout.String())
+		fmt.Fprint(c.errStream, stderr.String())
 		return fmt.Errorf("exec: %s %s; err: %+v", name, strings.Join(arg, " "), err)
+	}
+
+	go func() {
+		defer func() {
+			close(exitCh)
+		}()
+
+		err := cmd.Wait()
+		if err != nil {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			fmt.Fprint(c.outStream, stdout.String())
+			fmt.Fprint(c.errStream, stderr.String())
+			return fmt.Errorf("exec: %s %s; err: %+v", name, strings.Join(arg, " "), err)
+		}
+	case <-exitCh:
 	}
 
 	return nil
