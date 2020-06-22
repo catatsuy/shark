@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -106,11 +107,9 @@ func (c *CLI) run(configPath string) error {
 			for _, com := range v {
 				switch t := com.Raw.(type) {
 				case string:
-					cmd := exec.Command("sh", "-c", t)
-					cmd.Stdout = c.outStream
-					err := cmd.Run()
+					err := c.commandRun("sh", "-c", t)
 					if err != nil {
-						log.Fatal(err)
+						fmt.Fprintf(c.errStream, "%+v\n", err)
 					}
 				case []interface{}:
 					if len(t) <= 1 {
@@ -124,21 +123,17 @@ func (c *CLI) run(configPath string) error {
 						}
 						args = append(args, str)
 					}
-					cmd := exec.Command(args[0], args[1:]...)
-					cmd.Stdout = c.outStream
-					err := cmd.Run()
+					err := c.commandRun(args[0], args[1:]...)
 					if err != nil {
-						log.Fatal(err)
+						fmt.Printf("%+v\n", err)
 					}
 				case []string:
 					if len(t) <= 1 {
 						return fmt.Errorf("failed to parse")
 					}
-					cmd := exec.Command(t[0], t[1:]...)
-					cmd.Stdout = c.outStream
-					err := cmd.Run()
+					err := c.commandRun(t[0], t[1:]...)
 					if err != nil {
-						log.Fatal(err)
+						fmt.Printf("%+v\n", err)
 					}
 				case nil:
 				// nothing
@@ -147,6 +142,18 @@ func (c *CLI) run(configPath string) error {
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+func (c *CLI) commandRun(name string, arg ...string) error {
+	cmd := exec.Command(name, arg...)
+	cmd.Stdout = c.outStream
+	cmd.Stderr = c.errStream
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("exec: %s %s; err: %+v", name, strings.Join(arg, " "), err)
 	}
 
 	return nil
