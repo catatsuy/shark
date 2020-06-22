@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -10,8 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
+	"go.uber.org/multierr"
 )
 
 const (
@@ -76,7 +79,7 @@ func (c *CLI) Run(args []string) int {
 
 	err = c.run(configPath)
 	if err != nil {
-		fmt.Fprintf(c.errStream, "%+v", err)
+		fmt.Fprintf(c.errStream, "%+v\n", err)
 		return ExitCodeFail
 	}
 
@@ -98,6 +101,7 @@ func (c *CLI) run(configPath string) error {
 	}
 
 	var conf Config
+	var errs error
 
 	for _, file := range matches {
 		_, err := toml.DecodeFile(file, &conf)
@@ -105,13 +109,16 @@ func (c *CLI) run(configPath string) error {
 			return err
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+
 		for _, v := range conf.Plugin {
 			for _, com := range v {
 				switch t := com.Raw.(type) {
 				case string:
-					err := c.commandRun("sh", "-c", t)
+					err := c.commandRun(ctx, "sh", "-c", t)
 					if err != nil {
-						fmt.Fprintf(c.errStream, "%+v\n", err)
+						errs = multierr.Append(errs, err)
 					}
 				case []interface{}:
 					if len(t) == 0 {
@@ -125,17 +132,17 @@ func (c *CLI) run(configPath string) error {
 						}
 						args = append(args, str)
 					}
-					err := c.commandRun(args[0], args[1:]...)
+					err := c.commandRun(ctx, args[0], args[1:]...)
 					if err != nil {
-						fmt.Printf("%+v\n", err)
+						errs = multierr.Append(errs, err)
 					}
 				case []string:
 					if len(t) == 0 {
 						return fmt.Errorf("failed to parse")
 					}
-					err := c.commandRun(t[0], t[1:]...)
+					err := c.commandRun(ctx, t[0], t[1:]...)
 					if err != nil {
-						fmt.Printf("%+v\n", err)
+						errs = multierr.Append(errs, err)
 					}
 				case nil:
 				// nothing
@@ -146,11 +153,11 @@ func (c *CLI) run(configPath string) error {
 		}
 	}
 
-	return nil
+	return errs
 }
 
-func (c *CLI) commandRun(name string, arg ...string) error {
-	cmd := exec.Command(name, arg...)
+func (c *CLI) commandRun(ctx context.Context, name string, arg ...string) error {
+	cmd := exec.CommandContext(ctx, name, arg...)
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 	cmd.Stdout = stdout
