@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -75,7 +76,8 @@ func (c *CLI) Run(args []string) int {
 
 	err = c.run(configPath)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(c.errStream, "%+v", err)
+		return ExitCodeFail
 	}
 
 	return ExitCodeOK
@@ -112,7 +114,7 @@ func (c *CLI) run(configPath string) error {
 						fmt.Fprintf(c.errStream, "%+v\n", err)
 					}
 				case []interface{}:
-					if len(t) <= 1 {
+					if len(t) == 0 {
 						return fmt.Errorf("failed to parse")
 					}
 					args := make([]string, 0, len(t))
@@ -128,7 +130,7 @@ func (c *CLI) run(configPath string) error {
 						fmt.Printf("%+v\n", err)
 					}
 				case []string:
-					if len(t) <= 1 {
+					if len(t) == 0 {
 						return fmt.Errorf("failed to parse")
 					}
 					err := c.commandRun(t[0], t[1:]...)
@@ -149,10 +151,14 @@ func (c *CLI) run(configPath string) error {
 
 func (c *CLI) commandRun(name string, arg ...string) error {
 	cmd := exec.Command(name, arg...)
-	cmd.Stdout = c.outStream
-	cmd.Stderr = c.errStream
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	err := cmd.Run()
 	if err != nil {
+		fmt.Fprintf(c.outStream, stdout.String())
+		fmt.Fprintf(c.errStream, stderr.String())
 		return fmt.Errorf("exec: %s %s; err: %+v", name, strings.Join(arg, " "), err)
 	}
 
