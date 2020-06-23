@@ -55,12 +55,14 @@ func (c *CLI) Run(args []string) int {
 	var (
 		version    bool
 		configPath string
+		timeout    time.Duration
 	)
 
 	flags := flag.NewFlagSet("shark", flag.ContinueOnError)
 	flags.SetOutput(c.errStream)
 
 	flags.StringVar(&configPath, "config-path", "", "config path")
+	flags.DurationVar(&timeout, "timeout", 1*time.Minute, "timeout (sig kill)")
 
 	flags.BoolVar(&version, "version", false, "Print version information and quit")
 
@@ -74,7 +76,7 @@ func (c *CLI) Run(args []string) int {
 		return ExitCodeOK
 	}
 
-	err = c.run(configPath)
+	err = c.run(configPath, timeout)
 	if err != nil {
 		fmt.Fprintf(c.errStream, "%+v\n", err)
 		return ExitCodeFail
@@ -83,7 +85,7 @@ func (c *CLI) Run(args []string) int {
 	return ExitCodeOK
 }
 
-func (c *CLI) run(configPath string) error {
+func (c *CLI) run(configPath string, timeout time.Duration) error {
 	if configPath == "" {
 		return fmt.Errorf("must provide config path")
 	}
@@ -110,7 +112,7 @@ func (c *CLI) run(configPath string) error {
 			for _, com := range v {
 				switch t := com.Raw.(type) {
 				case string:
-					cmd := command.NewCommand(c.outStream, c.errStream, t, 10*time.Second)
+					cmd := command.NewCommand(c.outStream, c.errStream, t, timeout)
 					err := cmd.Exec()
 					if err != nil {
 						errs = multierr.Append(errs, err)
@@ -127,7 +129,7 @@ func (c *CLI) run(configPath string) error {
 						}
 						args = append(args, str)
 					}
-					cmd := command.NewCommands(c.outStream, c.errStream, args, 10*time.Second)
+					cmd := command.NewCommands(c.outStream, c.errStream, args, timeout)
 					err := cmd.Exec()
 					if err != nil {
 						errs = multierr.Append(errs, err)
@@ -136,7 +138,7 @@ func (c *CLI) run(configPath string) error {
 					if len(t) == 0 {
 						return fmt.Errorf("failed to parse")
 					}
-					cmd := command.NewCommands(c.outStream, c.errStream, t, 10*time.Second)
+					cmd := command.NewCommands(c.outStream, c.errStream, t, timeout)
 					err := cmd.Exec()
 					if err != nil {
 						errs = multierr.Append(errs, err)

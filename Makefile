@@ -5,5 +5,5 @@ all: bin/shark
 clean:
 	rm -rf bin/*
 
-bin/shark: cmd/shark/main.go cli/*.go
+bin/shark: cmd/shark/main.go cli/*.go command/*.go
 	go build -o bin/shark cmd/shark/main.go
